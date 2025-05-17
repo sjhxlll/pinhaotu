@@ -6,6 +6,14 @@
   <title>拼好图</title>
   <!-- 引入 Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* 保持碎片 1:1 预览 */
+    #splitPieces canvas {
+      width: auto!important;
+      height: auto!important;
+      max-width: none!important;
+    }
+  </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-6">
   <header class="w-full max-w-4xl mb-6">
@@ -38,10 +46,14 @@
         <span class="text-gray-700">碎片数：</span>
         <input type="number" id="splitCount" value="4" min="1" class="w-20 border rounded px-2 py-1">
       </label>
+      <label>
+        <span class="text-gray-700">粒度（像素块大小）：</span>
+        <input type="number" id="blockSize" value="10" min="1" class="w-20 border rounded px-2 py-1">
+      </label>
       <button id="doSplit" class="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700 transition">执行切分</button>
       <button id="downloadPieces" class="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition">下载碎片</button>
     </div>
-    <div id="splitPieces" class="grid grid-cols-4 gap-4"></div>
+    <div id="splitPieces" class="flex flex-wrap gap-4"></div>
   </section>
 
   <!-- 叠加模式 -->
@@ -86,51 +98,69 @@
       splitSection.classList.add('hidden');
     });
 
-    // 切分逻辑：无规则像素拆分，每个像素仅属于一个碎片
+    // 切分逻辑：基于像素块随机分配，并保持同一次切分的后缀一致
     const splitUpload = document.getElementById('splitUpload');
     const splitBg = document.getElementById('splitBg');
     const splitCount = document.getElementById('splitCount');
+    const blockSizeInput = document.getElementById('blockSize');
     const doSplit = document.getElementById('doSplit');
     const downloadPieces = document.getElementById('downloadPieces');
     const splitPieces = document.getElementById('splitPieces');
     let originalImg;
+    let currentSplitSuffix = '';
 
     splitUpload.addEventListener('change', e => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = ev => { originalImg = new Image(); originalImg.src = ev.target.result; };
+      reader.onload = ev => {
+        originalImg = new Image();
+        originalImg.onload = () => { doSplit.disabled = false; };
+        originalImg.src = ev.target.result;
+      };
       reader.readAsDataURL(file);
     });
 
     doSplit.addEventListener('click', () => {
-      if (!originalImg) return alert('请先上传原图');
+      if (!originalImg) return alert('请先上传原图并等待加载完成');
+      // 每次切分生成新的后缀
+      currentSplitSuffix = Math.random().toString(36).substr(2, 6);
       const count = +splitCount.value;
+      const blockSize = +blockSizeInput.value;
       const bg = splitBg.value;
       splitPieces.innerHTML = '';
 
-      const w = originalImg.width, h = originalImg.height;
-      const totalPixels = w * h;
-      // 随机生成每个像素对应的碎片索引
-      const pixelMap = new Uint8Array(totalPixels);
-      for (let i = 0; i < totalPixels; i++) {
-        pixelMap[i] = Math.floor(Math.random() * count);
+      const w = originalImg.width;
+      const h = originalImg.height;
+      const cols = Math.ceil(w / blockSize);
+      const rows = Math.ceil(h / blockSize);
+      const totalBlocks = cols * rows;
+
+      // 随机为每个像素块分配碎片索引
+      const blockMap = new Uint8Array(totalBlocks);
+      for (let i = 0; i < totalBlocks; i++) {
+        blockMap[i] = Math.floor(Math.random() * count);
       }
 
       const pieceCanvases = [];
       for (let pieceIdx = 0; pieceIdx < count; pieceIdx++) {
         const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
+        canvas.width = w; canvas.height = h;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
         ctx.drawImage(originalImg, 0, 0);
         const imgData = ctx.getImageData(0, 0, w, h);
-        // 根据 pixelMap 进行拆分
-        for (let idx = 0; idx < totalPixels; idx++) {
-          if (pixelMap[idx] !== pieceIdx) {
-            imgData.data[idx * 4 + 3] = 0; // 透明化非本碎片像素
+        const data = imgData.data;
+        for (let by = 0; by < rows; by++) {
+          for (let bx = 0; bx < cols; bx++) {
+            if (blockMap[by * cols + bx] !== pieceIdx) {
+              const startX = bx * blockSize; const startY = by * blockSize;
+              for (let y = startY; y < Math.min(startY + blockSize, h); y++) {
+                for (let x = startX; x < Math.min(startX + blockSize, w); x++) {
+                  data[(y * w + x) * 4 + 3] = 0;
+                }
+              }
+            }
           }
         }
         ctx.putImageData(imgData, 0, 0);
@@ -138,18 +168,18 @@
         pieceCanvases.push(canvas);
       }
 
-      // 下载功能
+      // 下载功能，使用同一次切分的后缀
       downloadPieces.onclick = () => {
         pieceCanvases.forEach((canvas, idx) => {
           const link = document.createElement('a');
           link.href = canvas.toDataURL('image/png');
-          link.download = `piece_${idx + 1}.png`;
+          link.download = `piece_${idx + 1}_${currentSplitSuffix}.png`;
           link.click();
         });
       };
     });
 
-    // 叠加逻辑
+    // 叠加逻辑：每次下载生成唯一后缀
     const mergeUpload = document.getElementById('mergeUpload');
     const mergeBg = document.getElementById('mergeBg');
     const doMerge = document.getElementById('doMerge');
@@ -162,8 +192,7 @@
       Array.from(e.target.files).forEach(file => {
         const reader = new FileReader();
         reader.onload = ev => {
-          const img = new Image();
-          img.src = ev.target.result;
+          const img = new Image(); img.src = ev.target.result;
           img.onload = () => mergeImgs.push(img);
         };
         reader.readAsDataURL(file);
@@ -174,22 +203,20 @@
       if (!mergeImgs.length) return alert('请先上传所有碎片');
       const bg = mergeBg.value;
       const ctx = mergeCanvas.getContext('2d');
-      const w = mergeImgs[0].width;
-      const h = mergeImgs[0].height;
-      mergeCanvas.width = w;
-      mergeCanvas.height = h;
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, w, h);
+      const w = mergeImgs[0].width; const h = mergeImgs[0].height;
+      mergeCanvas.width = w; mergeCanvas.height = h;
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'lighter';
       mergeImgs.forEach(img => ctx.drawImage(img, 0, 0));
       ctx.globalCompositeOperation = 'source-over';
     });
 
     downloadMerge.addEventListener('click', () => {
-      if (!mergeCanvas.width || !mergeCanvas.height) return alert('没有结果图片可下载');
+      if (!mergeCanvas.width) return alert('没有结果图片可下载');
+      const suffix = Math.random().toString(36).substr(2, 6);
       const link = document.createElement('a');
       link.href = mergeCanvas.toDataURL('image/png');
-      link.download = 'merged_image.png';
+      link.download = `merged_${suffix}.png`;
       link.click();
     });
   </script>
