@@ -10,7 +10,7 @@
 <body class="bg-gray-100 min-h-screen flex flex-col items-center p-6">
   <header class="w-full max-w-4xl mb-6">
     <h1 class="text-3xl font-bold text-center text-gray-800">拼好图</h1>
-    <p class="text-gray-600 text-center mt-2">切分图片后叠加像素，恢复完整密文</p>
+    <p class="text-gray-600 text-center mt-2">切分图片，叠加像素</p>
   </header>
 
   <!-- 模式切换 -->
@@ -68,7 +68,7 @@
   </section>
 
   <script>
-    // 模式切换
+    // 模式切换逻辑
     const modeSplit = document.getElementById('modeSplit');
     const modeMerge = document.getElementById('modeMerge');
     const splitSection = document.getElementById('splitSection');
@@ -86,14 +86,14 @@
       splitSection.classList.add('hidden');
     });
 
-    // 切分逻辑
+    // 切分逻辑：无规则像素拆分，每个像素仅属于一个碎片
     const splitUpload = document.getElementById('splitUpload');
     const splitBg = document.getElementById('splitBg');
     const splitCount = document.getElementById('splitCount');
     const doSplit = document.getElementById('doSplit');
     const downloadPieces = document.getElementById('downloadPieces');
     const splitPieces = document.getElementById('splitPieces');
-    let originalImg, pieceCanvases = [];
+    let originalImg;
 
     splitUpload.addEventListener('change', e => {
       const file = e.target.files[0];
@@ -108,36 +108,45 @@
       const count = +splitCount.value;
       const bg = splitBg.value;
       splitPieces.innerHTML = '';
-      pieceCanvases = [];
+
       const w = originalImg.width, h = originalImg.height;
-      for (let i = 0; i < count; i++) {
+      const totalPixels = w * h;
+      // 随机生成每个像素对应的碎片索引
+      const pixelMap = new Uint8Array(totalPixels);
+      for (let i = 0; i < totalPixels; i++) {
+        pixelMap[i] = Math.floor(Math.random() * count);
+      }
+
+      const pieceCanvases = [];
+      for (let pieceIdx = 0; pieceIdx < count; pieceIdx++) {
         const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
+        canvas.width = w;
+        canvas.height = h;
         const ctx = canvas.getContext('2d');
-        ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, w, h);
         ctx.drawImage(originalImg, 0, 0);
-        const data = ctx.getImageData(0, 0, w, h);
-        for (let p = 0; p < data.data.length; p += 4) {
-          if (Math.random() * count < 1) {
-            // 保留像素
-          } else {
-            data.data[p+3] = 0;
+        const imgData = ctx.getImageData(0, 0, w, h);
+        // 根据 pixelMap 进行拆分
+        for (let idx = 0; idx < totalPixels; idx++) {
+          if (pixelMap[idx] !== pieceIdx) {
+            imgData.data[idx * 4 + 3] = 0; // 透明化非本碎片像素
           }
         }
-        ctx.putImageData(data, 0, 0);
+        ctx.putImageData(imgData, 0, 0);
         splitPieces.appendChild(canvas);
         pieceCanvases.push(canvas);
       }
-    });
 
-    downloadPieces.addEventListener('click', () => {
-      if (!pieceCanvases.length) return alert('没有碎片可下载');
-      pieceCanvases.forEach((canvas, idx) => {
-        const link = document.createElement('a');
-        link.href = canvas.toDataURL('image/png');
-        link.download = `piece_${idx+1}.png`;
-        link.click();
-      });
+      // 下载功能
+      downloadPieces.onclick = () => {
+        pieceCanvases.forEach((canvas, idx) => {
+          const link = document.createElement('a');
+          link.href = canvas.toDataURL('image/png');
+          link.download = `piece_${idx + 1}.png`;
+          link.click();
+        });
+      };
     });
 
     // 叠加逻辑
@@ -153,7 +162,8 @@
       Array.from(e.target.files).forEach(file => {
         const reader = new FileReader();
         reader.onload = ev => {
-          const img = new Image(); img.src = ev.target.result;
+          const img = new Image();
+          img.src = ev.target.result;
           img.onload = () => mergeImgs.push(img);
         };
         reader.readAsDataURL(file);
@@ -164,9 +174,12 @@
       if (!mergeImgs.length) return alert('请先上传所有碎片');
       const bg = mergeBg.value;
       const ctx = mergeCanvas.getContext('2d');
-      const w = mergeImgs[0].width, h = mergeImgs[0].height;
-      mergeCanvas.width = w; mergeCanvas.height = h;
-      ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+      const w = mergeImgs[0].width;
+      const h = mergeImgs[0].height;
+      mergeCanvas.width = w;
+      mergeCanvas.height = h;
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
       ctx.globalCompositeOperation = 'lighter';
       mergeImgs.forEach(img => ctx.drawImage(img, 0, 0));
       ctx.globalCompositeOperation = 'source-over';
