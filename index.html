@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>图片切分与叠加</title>
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-6">
+  <header class="w-full max-w-4xl mb-6">
+    <h1 class="text-3xl font-bold text-center text-gray-800">图片切分与叠加解密工具</h1>
+    <p class="text-gray-600 text-center mt-2">切分图片后叠加像素，恢复完整密文</p>
+  </header>
+
+  <!-- 模式切换 -->
+  <div class="w-full max-w-4xl mb-6 flex justify-center space-x-4">
+    <button id="modeSplit" class="px-4 py-2 rounded-full bg-blue-600 text-white">切分模式</button>
+    <button id="modeMerge" class="px-4 py-2 rounded-full bg-gray-300 text-gray-800">叠加模式</button>
+  </div>
+
+  <!-- 切分模式 -->
+  <section id="splitSection" class="w-full max-w-4xl bg-white rounded-2xl shadow-md p-6">
+    <h2 class="text-2xl font-semibold text-gray-800 mb-4">切分模式</h2>
+    <div class="mb-4 flex flex-wrap gap-4 items-center">
+      <label>
+        <span class="text-gray-700">上传清晰原图：</span>
+        <input type="file" id="splitUpload" accept="image/*" class="ml-2">
+      </label>
+      <label>
+        <span class="text-gray-700">背景：</span>
+        <select id="splitBg" class="border rounded px-2 py-1">
+          <option value="#FFFFFF">白色</option>
+          <option value="#000000">黑色</option>
+        </select>
+      </label>
+      <label>
+        <span class="text-gray-700">碎片数：</span>
+        <input type="number" id="splitCount" value="4" min="1" class="w-20 border rounded px-2 py-1">
+      </label>
+      <button id="doSplit" class="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700 transition">执行切分</button>
+      <button id="downloadPieces" class="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition">下载碎片</button>
+    </div>
+    <div id="splitPieces" class="grid grid-cols-4 gap-4"></div>
+  </section>
+
+  <!-- 叠加模式 -->
+  <section id="mergeSection" class="hidden w-full max-w-4xl bg-white rounded-2xl shadow-md p-6">
+    <h2 class="text-2xl font-semibold text-gray-800 mb-4">叠加模式</h2>
+    <div class="mb-4 flex flex-wrap gap-4 items-center">
+      <label>
+        <span class="text-gray-700">上传碎片（保持同尺寸）：</span>
+        <input type="file" id="mergeUpload" accept="image/*" multiple class="ml-2">
+      </label>
+      <label>
+        <span class="text-gray-700">背景：</span>
+        <select id="mergeBg" class="border rounded px-2 py-1">
+          <option value="#FFFFFF">白色</option>
+          <option value="#000000">黑色</option>
+        </select>
+      </label>
+      <button id="doMerge" class="bg-green-600 text-white px-4 py-2 rounded-full hover:bg-green-700 transition">执行叠加</button>
+      <button id="downloadMerge" class="bg-purple-600 text-white px-4 py-2 rounded-full hover:bg-purple-700 transition">下载结果</button>
+    </div>
+    <div class="mt-4">
+      <canvas id="mergeCanvas" class="border rounded w-full"></canvas>
+    </div>
+  </section>
+
+  <script>
+    // 模式切换
+    const modeSplit = document.getElementById('modeSplit');
+    const modeMerge = document.getElementById('modeMerge');
+    const splitSection = document.getElementById('splitSection');
+    const mergeSection = document.getElementById('mergeSection');
+    modeSplit.addEventListener('click', () => {
+      modeSplit.className = 'px-4 py-2 rounded-full bg-blue-600 text-white';
+      modeMerge.className = 'px-4 py-2 rounded-full bg-gray-300 text-gray-800';
+      splitSection.classList.remove('hidden');
+      mergeSection.classList.add('hidden');
+    });
+    modeMerge.addEventListener('click', () => {
+      modeMerge.className = 'px-4 py-2 rounded-full bg-green-600 text-white';
+      modeSplit.className = 'px-4 py-2 rounded-full bg-gray-300 text-gray-800';
+      mergeSection.classList.remove('hidden');
+      splitSection.classList.add('hidden');
+    });
+
+    // 切分逻辑
+    const splitUpload = document.getElementById('splitUpload');
+    const splitBg = document.getElementById('splitBg');
+    const splitCount = document.getElementById('splitCount');
+    const doSplit = document.getElementById('doSplit');
+    const downloadPieces = document.getElementById('downloadPieces');
+    const splitPieces = document.getElementById('splitPieces');
+    let originalImg, pieceCanvases = [];
+
+    splitUpload.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { originalImg = new Image(); originalImg.src = ev.target.result; };
+      reader.readAsDataURL(file);
+    });
+
+    doSplit.addEventListener('click', () => {
+      if (!originalImg) return alert('请先上传原图');
+      const count = +splitCount.value;
+      const bg = splitBg.value;
+      splitPieces.innerHTML = '';
+      pieceCanvases = [];
+      const w = originalImg.width, h = originalImg.height;
+      for (let i = 0; i < count; i++) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(originalImg, 0, 0);
+        const data = ctx.getImageData(0, 0, w, h);
+        for (let p = 0; p < data.data.length; p += 4) {
+          if (Math.random() * count < 1) {
+            // 保留像素
+          } else {
+            data.data[p+3] = 0;
+          }
+        }
+        ctx.putImageData(data, 0, 0);
+        splitPieces.appendChild(canvas);
+        pieceCanvases.push(canvas);
+      }
+    });
+
+    downloadPieces.addEventListener('click', () => {
+      if (!pieceCanvases.length) return alert('没有碎片可下载');
+      pieceCanvases.forEach((canvas, idx) => {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `piece_${idx+1}.png`;
+        link.click();
+      });
+    });
+
+    // 叠加逻辑
+    const mergeUpload = document.getElementById('mergeUpload');
+    const mergeBg = document.getElementById('mergeBg');
+    const doMerge = document.getElementById('doMerge');
+    const downloadMerge = document.getElementById('downloadMerge');
+    const mergeCanvas = document.getElementById('mergeCanvas');
+    let mergeImgs = [];
+
+    mergeUpload.addEventListener('change', e => {
+      mergeImgs = [];
+      Array.from(e.target.files).forEach(file => {
+        const reader = new FileReader();
+        reader.onload = ev => {
+          const img = new Image(); img.src = ev.target.result;
+          img.onload = () => mergeImgs.push(img);
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+
+    doMerge.addEventListener('click', () => {
+      if (!mergeImgs.length) return alert('请先上传所有碎片');
+      const bg = mergeBg.value;
+      const ctx = mergeCanvas.getContext('2d');
+      const w = mergeImgs[0].width, h = mergeImgs[0].height;
+      mergeCanvas.width = w; mergeCanvas.height = h;
+      ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
+      ctx.globalCompositeOperation = 'lighter';
+      mergeImgs.forEach(img => ctx.drawImage(img, 0, 0));
+      ctx.globalCompositeOperation = 'source-over';
+    });
+
+    downloadMerge.addEventListener('click', () => {
+      if (!mergeCanvas.width || !mergeCanvas.height) return alert('没有结果图片可下载');
+      const link = document.createElement('a');
+      link.href = mergeCanvas.toDataURL('image/png');
+      link.download = 'merged_image.png';
+      link.click();
+    });
+  </script>
+</body>
+</html>
